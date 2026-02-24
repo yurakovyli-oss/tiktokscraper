@@ -124,14 +124,14 @@ export async function POST(request) {
         };
 
         if (type === 'tag') {
-            apifyInput.hashtags = [query];
+            apifyInput.hashtags = query.split(',').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean);
         } else if (type === 'url') {
             // 'query' should be an array of URLs
             apifyInput.postURLs = Array.isArray(query) ? query : [query];
             // When scraping specific URLs, we usually don't need resultsPerPage or we set it high
             apifyInput.resultsPerPage = 100;
         } else {
-            apifyInput.searchQueries = [query];
+            apifyInput.searchQueries = query.split(',').map(q => q.trim()).filter(Boolean);
         }
 
         // Start Apify Run
