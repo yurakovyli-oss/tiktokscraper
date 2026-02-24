@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
+  serverExternalPackages: ['@ffmpeg-installer/ffmpeg', 'fluent-ffmpeg']
 };
 
 export default nextConfig;
