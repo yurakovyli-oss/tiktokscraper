@@ -100,7 +100,6 @@ export async function POST(req) {
                 transcription = await groq.audio.transcriptions.create({
                     file: audioStream,
                     model: 'whisper-large-v3-turbo', // Turbo is generally less prone to hallucinations and faster
-                    prompt: 'Это видео из TikTok. Текст может быть разговорным, сленговым. Пожалуйста, игнорируй тишину и музыку, не придумывай текст, если его нет.',
                     response_format: 'json',
                     temperature: 0.0 // Keep deterministic
                 });
