@@ -47,10 +47,20 @@ export default function Home() {
   useEffect(() => {
     try {
       const savedHistory = localStorage.getItem('tiktok_scraper_history');
-      if (savedHistory) setHistory(JSON.parse(savedHistory));
+      if (savedHistory) {
+        try {
+          const parsed = JSON.parse(savedHistory);
+          if (Array.isArray(parsed)) setHistory(parsed);
+        } catch (e) { }
+      }
 
       const savedVids = localStorage.getItem('tiktok_scraper_saved');
-      if (savedVids) setSavedVideos(JSON.parse(savedVids));
+      if (savedVids) {
+        try {
+          const parsed = JSON.parse(savedVids);
+          if (Array.isArray(parsed)) setSavedVideos(parsed);
+        } catch (e) { }
+      }
     } catch (e) {
       console.error('Failed to load from storage', e);
     }
@@ -61,7 +71,7 @@ export default function Home() {
         const res = await fetch('/api/apify-keys');
         if (res.ok) {
           const data = await res.json();
-          setApifyKeys(data.keys || []);
+          setApifyKeys(Array.isArray(data.keys) ? data.keys : []);
           const savedKeyId = localStorage.getItem('tiktok_scraper_key_id');
           if (savedKeyId && data.keys?.find(k => k.id === savedKeyId)) {
             setSelectedKeyId(savedKeyId);
@@ -466,7 +476,7 @@ export default function Home() {
                 </button>
               )}
             </div>
-            {history.length === 0 ? (
+            {(!history || history.length === 0) ? (
               <p style={{ opacity: 0.5, fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>История пуста</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -514,7 +524,7 @@ export default function Home() {
                     </button>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.8rem', opacity: 0.6 }}>
                       <span>{item.date}</span>
-                      <span style={{ marginRight: '1.5rem' }}>{item.results.length} видео</span>
+                      <span style={{ marginRight: '1.5rem' }}>{item.results?.length || 0} видео</span>
                     </div>
                     <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>
                       {item.type === 'tag' ? '#' : ''}{item.query}
@@ -548,7 +558,7 @@ export default function Home() {
               )}
             </div>
 
-            {savedVideos.length === 0 ? (
+            {(!savedVideos || savedVideos.length === 0) ? (
               <p style={{ opacity: 0.5, fontSize: '0.9rem', textAlign: 'center', marginTop: '2rem' }}>Нет сохраненных видео</p>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
