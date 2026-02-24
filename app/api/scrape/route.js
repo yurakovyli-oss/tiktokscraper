@@ -7,13 +7,13 @@ const CACHE_TTL = 1000 * 60 * 60 * 6; // 6 hours
 export async function POST(request) {
     try {
         const body = await request.json();
-        const { query, type = 'keyword', maxItems = 10, minViews = 0, forceRefresh = false, keyId } = body;
+        const { query, type = 'keyword', maxItems = 10, minViews = 0, maxDays = null, forceRefresh = false, keyId } = body;
 
         if (!query) {
             return NextResponse.json({ error: 'Search query is required' }, { status: 400 });
         }
 
-        const cacheKey = `${type}:${JSON.stringify(query)}:${maxItems}:${minViews}`;
+        const cacheKey = `${type}:${JSON.stringify(query)}:${maxItems}:${minViews}:${maxDays}`;
 
         if (!forceRefresh && cache.has(cacheKey)) {
             const cachedData = cache.get(cacheKey);
@@ -95,11 +95,16 @@ export async function POST(request) {
         }
 
         // Prepare Apify input based on the chosen TikTok scraper actor.
-        // We assume a standard TikTok scraper input like `hashtags` or `searchQueries`.
+        let fetchLimit = maxItems || 10;
+        if (maxDays) {
+            // Overfetch to ensure we have enough items left after date filtering
+            fetchLimit = Math.max(fetchLimit * 3, 30);
+        }
+
         const apifyInput = {
-            resultsPerPage: maxItems || 10,
-            maxItems: maxItems || 10,
-            maxVideos: maxItems || 10,
+            resultsPerPage: fetchLimit,
+            maxItems: fetchLimit,
+            maxVideos: fetchLimit,
             scrapeDetailPages: false,
             includeComments: false,
             includeRelatedVideos: false,
@@ -166,17 +171,37 @@ export async function POST(request) {
         const datasetRes = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${APIFY_TOKEN}`);
         const datasetItems = await datasetRes.json();
 
-        console.log("=== APIFY PAYLOAD SAMPLE ===");
-        if (datasetItems && datasetItems.length > 0) {
-            console.log(JSON.stringify(datasetItems[0], null, 2));
+        let finalItems = datasetItems || [];
+
+        // Apply maxDays filter
+        if (maxDays && !isNaN(parseInt(maxDays))) {
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - parseInt(maxDays));
+            const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000); // TikTok timestamps are often in Unix seconds
+
+            finalItems = finalItems.filter(item => {
+                const createTime = item.createTime || (item.videoMeta && item.videoMeta.createTime) || (item.video && item.video.createTime);
+                if (!createTime) return true; // Keep if we can't determine date
+
+                const timeStr = String(createTime);
+                // Handle both seconds (10 chars) and ms (13 chars)
+                const timeNum = timeStr.length === 10 ? parseInt(timeStr) : parseInt(timeStr) / 1000;
+
+                return timeNum >= cutoffTimestamp;
+            });
         }
 
+        // Slice to requested maxItems length
+        finalItems = finalItems.slice(0, maxItems || 10);
+
+        console.log(`=== APIFY FETCH (${finalItems.length}/${datasetItems.length} items after filtering) ===`);
+
         // Save to cache
-        cache.set(cacheKey, { timestamp: Date.now(), data: datasetItems });
+        cache.set(cacheKey, { timestamp: Date.now(), data: finalItems });
 
         return NextResponse.json({
             success: true,
-            data: datasetItems
+            data: finalItems
         });
 
     } catch (error) {

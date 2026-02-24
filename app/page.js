@@ -7,6 +7,7 @@ export default function Home() {
   const [query, setQuery] = useState('');
   const [maxItems, setMaxItems] = useState(10);
   const [minViews, setMinViews] = useState('');
+  const [maxDays, setMaxDays] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -107,6 +108,7 @@ export default function Home() {
       query: currentQuery,
       maxItems: currentMax,
       minViews: currentMinViews,
+      maxDays: maxDays,
       results: newResults
     };
 
@@ -122,6 +124,7 @@ export default function Home() {
     setQuery(historyItem.query);
     setMaxItems(historyItem.maxItems);
     setMinViews(historyItem.minViews);
+    setMaxDays(historyItem.maxDays || '');
     setResults(historyItem.results);
     setHasSearched(true);
     setError(null);
@@ -161,7 +164,7 @@ export default function Home() {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: searchType, query, maxItems: Number(maxItems) || 10, keyId: selectedKeyId })
+        body: JSON.stringify({ type: searchType, query, maxItems: Number(maxItems) || 10, maxDays: maxDays ? Number(maxDays) : null, keyId: selectedKeyId })
       });
 
       const data = await res.json();
@@ -172,7 +175,7 @@ export default function Home() {
 
       const items = data.data || [];
 
-      // Filter by minimum views if provided
+      // Filter by minimum views on frontend (maxDays is handled on backend to allow overfetching)
       const minViewsNumber = Number(minViews);
       let filteredItems = items;
       if (!isNaN(minViewsNumber) && minViewsNumber > 0) {
@@ -677,9 +680,9 @@ export default function Home() {
             </div>
 
             {/* Grid for Numbers */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Кол-во роликов</label>
+                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Кол-во</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#cbd5e1', fontWeight: 'bold' }}>#</span>
                   <input
@@ -689,7 +692,7 @@ export default function Home() {
                     value={maxItems}
                     onChange={(e) => setMaxItems(e.target.value)}
                     style={{
-                      width: '100%', padding: '1rem 1rem 1rem 2.2rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
+                      width: '100%', padding: '1rem 0.5rem 1rem 2.2rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
                     onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
@@ -706,11 +709,32 @@ export default function Home() {
                   <input
                     type="number"
                     min="0"
-                    placeholder="Необяз."
+                    placeholder="—"
                     value={minViews}
                     onChange={(e) => setMinViews(e.target.value)}
                     style={{
-                      width: '100%', padding: '1rem 1rem 1rem 2.5rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
+                      width: '100%', padding: '1rem 0.5rem 1rem 2.5rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
+                    }}
+                    onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
+                    onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Дней назад</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#cbd5e1' }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="—"
+                    value={maxDays}
+                    onChange={(e) => setMaxDays(e.target.value)}
+                    style={{
+                      width: '100%', padding: '1rem 0.5rem 1rem 2.5rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
                     }}
                     onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
                     onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
