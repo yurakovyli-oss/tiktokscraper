@@ -7,13 +7,13 @@ const CACHE_TTL = 1000 * 60 * 60 * 6; // 6 hours
 export async function POST(request) {
     try {
         const body = await request.json();
-        const { query, type = 'keyword', maxItems = 10, minViews = 0, maxDays = null, forceRefresh = false, keyId } = body;
+        const { query, type = 'keyword', maxItems = 10, minViews = 0, dateFrom = null, dateTo = null, forceRefresh = false, keyId } = body;
 
         if (!query) {
             return NextResponse.json({ error: 'Search query is required' }, { status: 400 });
         }
 
-        const cacheKey = `${type}:${JSON.stringify(query)}:${maxItems}:${minViews}:${maxDays}`;
+        const cacheKey = `${type}:${JSON.stringify(query)}:${maxItems}:${minViews}:${dateFrom}:${dateTo}`;
 
         if (!forceRefresh && cache.has(cacheKey)) {
             const cachedData = cache.get(cacheKey);
@@ -96,7 +96,7 @@ export async function POST(request) {
 
         // Prepare Apify input based on the chosen TikTok scraper actor.
         let fetchLimit = maxItems || 10;
-        if (maxDays) {
+        if (dateFrom || dateTo) {
             // Overfetch to ensure we have enough items left after date filtering
             fetchLimit = Math.max(fetchLimit * 3, 30);
         }
@@ -173,11 +173,20 @@ export async function POST(request) {
 
         let finalItems = datasetItems || [];
 
-        // Apply maxDays filter
-        if (maxDays && !isNaN(parseInt(maxDays))) {
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - parseInt(maxDays));
-            const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000); // TikTok timestamps are often in Unix seconds
+        // Apply date limits
+        if (dateFrom || dateTo) {
+            let fromTimestamp = 0;
+            let toTimestamp = Infinity;
+
+            if (dateFrom) {
+                fromTimestamp = Math.floor(new Date(dateFrom).getTime() / 1000);
+            }
+            if (dateTo) {
+                // To include the whole entire selected day, set the boundary to 1 second before the NEXT day
+                const toDateObj = new Date(dateTo);
+                toDateObj.setDate(toDateObj.getDate() + 1);
+                toTimestamp = Math.floor(toDateObj.getTime() / 1000) - 1;
+            }
 
             finalItems = finalItems.filter(item => {
                 const createTime = item.createTime || (item.videoMeta && item.videoMeta.createTime) || (item.video && item.video.createTime);
@@ -187,7 +196,7 @@ export async function POST(request) {
                 // Handle both seconds (10 chars) and ms (13 chars)
                 const timeNum = timeStr.length === 10 ? parseInt(timeStr) : parseInt(timeStr) / 1000;
 
-                return timeNum >= cutoffTimestamp;
+                return timeNum >= fromTimestamp && timeNum <= toTimestamp;
             });
         }
 
