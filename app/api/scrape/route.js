@@ -46,7 +46,7 @@ export async function POST(request) {
             }
         }
 
-        const ACTOR_ID = process.env.APIFY_ACTOR_ID || 'GdWCkxBtKWOsKjdch'; // Default to popular tiktok scraper
+        const ACTOR_ID = process.env.APIFY_ACTOR_ID || '0wWcZGAytCj9lIN0S'; // Default to apidojo scraper
         // Fallback to mock data if no token is provided (useful for UI development & testing)
         if (!APIFY_TOKEN || !ACTOR_ID) {
             console.log('No Apify credentials found, returning mock data.');
@@ -107,24 +107,24 @@ export async function POST(request) {
         const apifyInput = {
             resultsPerPage: fetchLimit,
             maxItems: fetchLimit,
-            maxVideos: fetchLimit,
-            scrapeDetailPages: false,
-            includeComments: false,
-            includeRelatedVideos: false,
-            includeMusic: false,
-            includeAuthor: false,
-            downloadVideo: false
+            shouldDownloadVideos: false,
+            shouldDownloadCovers: false,
+            shouldDownloadSubtitles: false,
+            shouldDownloadSlideshowImages: false
         };
 
         if (type === 'tag') {
             apifyInput.hashtags = query.split(',').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean);
         } else if (type === 'url') {
             // 'query' should be an array of URLs
-            apifyInput.postURLs = Array.isArray(query) ? query : [query];
+            apifyInput.startUrls = Array.isArray(query) ? query.map(q => ({ url: q })) : [{ url: query }];
             // When scraping specific URLs, we usually don't need resultsPerPage or we set it high
             apifyInput.resultsPerPage = 100;
         } else {
-            apifyInput.searchQueries = query.split(',').map(q => q.trim()).filter(Boolean);
+            // apidojo often uses `searchQueries`, but we also add `keywords` as some actors prefer it
+            const queries = query.split(',').map(q => q.trim()).filter(Boolean);
+            apifyInput.searchQueries = queries;
+            apifyInput.keywords = queries; // specific to some apidojo versions
         }
 
         // Start Apify Run
@@ -179,6 +179,33 @@ export async function POST(request) {
 
         // Slice to requested maxItems length just in case
         finalItems = finalItems.slice(0, maxItems || 10);
+
+        // Normalize items so they map predictably to UI regardless of the used actor's output schema
+        finalItems = finalItems.map(item => {
+            const authorName = item.author?.uniqueId || item.authorMeta?.name || item.authorMeta?.nickName || 'user';
+            const vidId = item.id || item.video?.id || item.postId;
+            return {
+                ...item,
+                id: vidId,
+                text: item.desc || item.text || item.title || '',
+                playCount: item.playCount || item.stats?.playCount || item.video?.playCount || item.statsV2?.playCount || 0,
+                diggCount: item.diggCount || item.stats?.diggCount || item.video?.diggCount || item.statsV2?.diggCount || 0,
+                commentCount: item.commentCount || item.stats?.commentCount || item.video?.commentCount || item.statsV2?.commentCount || 0,
+                shareCount: item.shareCount || item.stats?.shareCount || item.video?.shareCount || item.statsV2?.shareCount || 0,
+                collectCount: item.collectCount || item.stats?.collectCount || item.video?.collectCount || item.statsV2?.collectCount || 0,
+                webVideoUrl: item.webVideoUrl || item.videoUrl || item.url || `https://www.tiktok.com/@${authorName}/video/${vidId}`,
+                authorMeta: item.authorMeta || {
+                    name: authorName,
+                    nickname: item.author?.nickname || '',
+                    avatar: item.author?.avatar || item.author?.avatarLarger || ''
+                },
+                videoMeta: item.videoMeta || item.video || {
+                    coverUrl: item.video?.cover || item.coverUrl || item.imageUrl,
+                    downloadAddr: item.video?.downloadAddr || item.videoUrl || item.playAddr
+                },
+                createTime: item.createTime || item.video?.createTime || item.createdAt
+            };
+        });
 
         console.log(`=== APIFY FETCH (${finalItems.length}/${datasetItems.length} items after filtering) ===`);
 
