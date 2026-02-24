@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 
+export const maxDuration = 300; // Allow Vercel to run up to 5 minutes (if plan supports) to prevent 504 Gateway errors
+
 // In-memory cache to save on Apify requests
 const cache = new Map();
 const CACHE_TTL = 1000 * 60 * 60 * 6; // 6 hours
@@ -96,9 +98,17 @@ export async function POST(request) {
 
         // Prepare Apify input based on the chosen TikTok scraper actor.
         let fetchLimit = maxItems || 10;
+
+        // Safety cap to prevent user from accidentally burning their entire balance with an extra zero (e.g. 50000)
+        if (fetchLimit > 1000) {
+            fetchLimit = 1000;
+        }
+
         if (dateFrom || dateTo) {
-            // Overfetch to ensure we have enough items left after date filtering
-            fetchLimit = Math.max(fetchLimit * 3, 30);
+            // Overfetch to ensure we have enough items left after date filtering, 
+            // but keep the multiplier modest to save Apify balance. (Max 50 extra)
+            fetchLimit = Math.min(fetchLimit * 2, fetchLimit + 50);
+            if (fetchLimit > 1000) fetchLimit = 1000;
         }
 
         const apifyInput = {
@@ -155,7 +165,8 @@ export async function POST(request) {
         // Poll for completion (Wait until status is SUCCEEDED)
         let status = runData.data.status;
         let attempts = 0;
-        while (status !== 'SUCCEEDED' && status !== 'FAILED' && status !== 'ABORTED' && attempts < 20) {
+        // 100 attempts * 3s = 300s timeout limit (matching Vercel maxDuration)
+        while (status !== 'SUCCEEDED' && status !== 'FAILED' && status !== 'ABORTED' && attempts < 100) {
             await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s between checks
             const statusRes = await fetch(`https://api.apify.com/v2/acts/${ACTOR_ID}/runs/${runId}?token=${APIFY_TOKEN}`);
             const statusData = await statusRes.json();
