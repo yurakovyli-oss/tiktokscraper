@@ -16,20 +16,7 @@
   --border-radius-md: 16px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #1e1b1a;
-    --foreground: #f0e6e0;
-    --primary: #828ba0;
-    --primary-hover: #a1abc2;
-    --card-bg: rgba(45, 40, 38, 0.7);
-    --card-border: rgba(255, 255, 255, 0.04);
-    --input-bg: rgba(30, 25, 24, 0.5);
-    --input-border: #403a38;
-    --focus-ring: rgba(130, 139, 160, 0.4);
-    --glass-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-}
+
 
 * {
   box-sizing: border-box;
