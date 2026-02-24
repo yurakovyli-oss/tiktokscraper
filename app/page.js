@@ -7,6 +7,7 @@ export default function Home() {
   const [query, setQuery] = useState('');
   const [maxItems, setMaxItems] = useState(10);
   const [minViews, setMinViews] = useState('');
+  const [minEr, setMinEr] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [results, setResults] = useState([]);
@@ -109,6 +110,7 @@ export default function Home() {
       query: currentQuery,
       maxItems: currentMax,
       minViews: currentMinViews,
+      minEr: minEr,
       dateFrom: dateFrom,
       dateTo: dateTo,
       results: newResults
@@ -125,7 +127,8 @@ export default function Home() {
     setSearchType(historyItem.type);
     setQuery(historyItem.query);
     setMaxItems(historyItem.maxItems);
-    setMinViews(historyItem.minViews);
+    setMinViews(historyItem.minViews || '');
+    setMinEr(historyItem.minEr || '');
     setDateFrom(historyItem.dateFrom || '');
     setDateTo(historyItem.dateTo || '');
     setResults(historyItem.results);
@@ -167,7 +170,7 @@ export default function Home() {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: searchType, query, maxItems: Number(maxItems) || 10, dateFrom, dateTo, keyId: selectedKeyId })
+        body: JSON.stringify({ type: searchType, query, maxItems: Number(maxItems) || 10, keyId: selectedKeyId })
       });
 
       const data = await res.json();
@@ -178,15 +181,9 @@ export default function Home() {
 
       const items = data.data || [];
 
-      // Filter by minimum views on frontend (maxDays is handled on backend to allow overfetching)
-      const minViewsNumber = Number(minViews);
-      let filteredItems = items;
-      if (!isNaN(minViewsNumber) && minViewsNumber > 0) {
-        filteredItems = items.filter(item => (item.playCount || 0) >= minViewsNumber);
-      }
-
-      setResults(filteredItems);
-      saveToHistory(filteredItems, searchType, query, maxItems, minViews);
+      // Store raw, unfiltered items in state and history. Formatting/filtering happens on the fly.
+      setResults(items);
+      saveToHistory(items, searchType, query, maxItems, minViews);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -293,6 +290,49 @@ export default function Home() {
         return next;
       });
     }
+  };
+
+  // Live filter helper for frontend rendering
+  const getFilteredResults = (itemsToFilter) => {
+    return itemsToFilter.filter(item => {
+      // 1. Min Views Filter
+      if (minViews) {
+        const v = Number(minViews);
+        if (!isNaN(v) && (item.playCount || 0) < v) return false;
+      }
+
+      // 2. ER% Filter
+      if (minEr) {
+        const erTarget = Number(minEr);
+        if (!isNaN(erTarget)) {
+          const plays = item.playCount || 0;
+          const er = plays > 0 ? (((item.diggCount || 0) + (item.commentCount || 0) + (item.shareCount || 0) + (item.collectCount || 0)) / plays * 100) : 0;
+          if (er < erTarget) return false;
+        }
+      }
+
+      // 3. Date Filters
+      if (dateFrom || dateTo) {
+        const createTime = item.createTime || (item.videoMeta && item.videoMeta.createTime) || (item.video && item.video.createTime);
+        if (createTime) {
+          const timeStr = String(createTime);
+          const timeNum = timeStr.length === 10 ? parseInt(timeStr) : parseInt(timeStr) / 1000;
+
+          if (dateFrom) {
+            const fromSec = Math.floor(new Date(dateFrom).getTime() / 1000);
+            if (timeNum < fromSec) return false;
+          }
+          if (dateTo) {
+            const toDateObj = new Date(dateTo);
+            toDateObj.setDate(toDateObj.getDate() + 1);
+            const toSec = Math.floor(toDateObj.getTime() / 1000) - 1;
+            if (timeNum > toSec) return false;
+          }
+        }
+      }
+
+      return true;
+    });
   };
 
   return (
@@ -684,81 +724,119 @@ export default function Home() {
 
             {/* Grid for Numbers */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Кол-во</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#cbd5e1', fontWeight: 'bold' }}>#</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="1000"
-                    value={maxItems}
-                    onChange={(e) => setMaxItems(e.target.value)}
-                    style={{
-                      width: '100%', padding: '1rem 0.5rem 1rem 2.2rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
-                    }}
-                    onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
-                    onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
-                  />
+
+              {/* Request Parameters Section - Grey background */}
+              <div style={{
+                background: 'rgba(241, 245, 249, 0.5)',
+                padding: '1rem',
+                borderRadius: '16px',
+                border: '1px solid rgba(226, 232, 240, 0.8)',
+                display: 'flex', flexDirection: 'column', gap: '1rem'
+              }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '-0.5rem' }}>Параметры сбора</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569', marginLeft: '0.5rem' }}>Сколько парсить</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontWeight: 'bold' }}>#</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={maxItems}
+                      onChange={(e) => setMaxItems(e.target.value)}
+                      style={{
+                        width: '100%', padding: '0.9rem 0.5rem 0.9rem 2.2rem', borderRadius: '12px', border: '1px solid var(--input-border)', background: '#ffffff', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                      }}
+                      onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
+                      onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
+                    />
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginLeft: '0.5rem' }}>Больше роликов = дольше сбор</div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Мин. просмотров</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#cbd5e1' }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    placeholder="—"
-                    value={minViews}
-                    onChange={(e) => setMinViews(e.target.value)}
-                    style={{
-                      width: '100%', padding: '1rem 0.5rem 1rem 2.5rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease'
-                    }}
-                    onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
-                    onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
-                  />
-                </div>
-              </div>
+              {/* Local Filters Section - Highlighted background */}
+              <div style={{
+                background: 'rgba(238, 242, 255, 0.5)',
+                padding: '1rem',
+                borderRadius: '16px',
+                border: '1px solid rgba(199, 210, 254, 0.8)',
+                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem'
+              }}>
+                <div style={{ gridColumn: 'span 2', fontSize: '0.8rem', fontWeight: 'bold', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '-0.5rem' }}>Локальные фильтры (мгновенно)</div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Период с</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#cbd5e1' }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                  </span>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    style={{
-                      width: '100%', padding: '1rem 0.5rem 1rem 2.5rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease', fontFamily: 'inherit'
-                    }}
-                    onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
-                    onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
-                  />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569', marginLeft: '0.5rem' }}>Мин. просмотров</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="—"
+                      value={minViews}
+                      onChange={(e) => setMinViews(e.target.value)}
+                      style={{
+                        width: '100%', padding: '0.9rem 0.5rem 0.9rem 2.5rem', borderRadius: '12px', border: '1px solid var(--input-border)', background: '#ffffff', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                      }}
+                      onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
+                      onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#64748b', marginLeft: '0.5rem' }}>Период по</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#cbd5e1' }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                  </span>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    style={{
-                      width: '100%', padding: '1rem 0.5rem 1rem 2.5rem', borderRadius: '14px', border: '1px solid var(--input-border)', background: 'var(--input-bg)', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease', fontFamily: 'inherit'
-                    }}
-                    onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
-                    onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
-                  />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569', marginLeft: '0.5rem' }}>Мин. ER (%)</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontWeight: 'bold' }}>%</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      placeholder="—"
+                      value={minEr}
+                      onChange={(e) => setMinEr(e.target.value)}
+                      style={{
+                        width: '100%', padding: '0.9rem 0.5rem 0.9rem 2.2rem', borderRadius: '12px', border: '1px solid var(--input-border)', background: '#ffffff', color: 'var(--foreground)', fontSize: '1rem', outline: 'none', transition: 'all 0.2s ease', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                      }}
+                      onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
+                      onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569', marginLeft: '0.5rem' }}>С даты</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      style={{
+                        width: '100%', padding: '0.9rem 0.5rem', borderRadius: '12px', border: '1px solid var(--input-border)', background: '#ffffff', color: 'var(--foreground)', fontSize: '0.9rem', outline: 'none', transition: 'all 0.2s ease', fontFamily: 'inherit', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                      }}
+                      onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
+                      onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569', marginLeft: '0.5rem' }}>По дату</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      style={{
+                        width: '100%', padding: '0.9rem 0.5rem', borderRadius: '12px', border: '1px solid var(--input-border)', background: '#ffffff', color: 'var(--foreground)', fontSize: '0.9rem', outline: 'none', transition: 'all 0.2s ease', fontFamily: 'inherit', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                      }}
+                      onFocus={(e) => { e.target.style.borderColor = '#4f46e5'; }}
+                      onBlur={(e) => { e.target.style.borderColor = 'var(--input-border)'; }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -838,46 +916,38 @@ export default function Home() {
             </div>
           )}
 
-          {!loading && hasSearched && results.length === 0 && !error && (
-            <div style={{ textAlign: 'center', opacity: 0.7, padding: '3rem' }}>
-              <h2>Видео по запросу "{query}" не найдены</h2>
-              <p>Попробуйте использовать другое название или хэштег.</p>
+          {/* Top Control Bar for Filtering stats */}
+          {!loading && hasSearched && results.length > 0 && !error && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', padding: '1rem 1.5rem', background: 'var(--card-bg)', borderRadius: '16px', border: '1px solid var(--input-border)', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <button
+                  onClick={handleRefreshStats}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--input-bg)',
+                    border: '1px solid var(--input-border)', padding: '0.5rem 1rem', borderRadius: '10px',
+                    color: 'var(--foreground)', fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.2s',
+                    fontWeight: '500'
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.color = 'var(--primary)' }}
+                  onMouseOut={(e) => { e.currentTarget.style.borderColor = 'var(--input-border)'; e.currentTarget.style.color = 'var(--foreground)' }}
+                  title="Обновить просмотры, лайки и ER по всем видео в выдаче"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                  Обновить метрики
+                </button>
+              </div>
+
+              <div style={{ fontSize: '0.95rem', color: '#64748b' }}>
+                Отображено: <span style={{ fontWeight: 'bold', color: 'var(--foreground)' }}>{getFilteredResults().length}</span> из {results.length} спарсеных
+              </div>
             </div>
           )}
 
-          {!loading && hasSearched && results.length > 0 && !error && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-              <button
-                onClick={handleRefreshStats}
-                style={{
-                  background: 'transparent',
-                  color: '#64748b',
-                  border: '1px solid var(--input-border)',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  fontWeight: '500',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  fontSize: '0.9rem',
-                  transition: 'all 0.2s ease',
-                  boxShadow: 'none'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.background = 'var(--input-bg)';
-                  e.currentTarget.style.color = 'var(--foreground)';
-                  e.currentTarget.style.borderColor = '#cbd5e1';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = '#64748b';
-                  e.currentTarget.style.borderColor = 'var(--input-border)';
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                Обновить метрики
-              </button>
+          {/* Results Grid */}
+          {!loading && hasSearched && getFilteredResults().length === 0 && results.length > 0 && !error && (
+            <div style={{ textAlign: 'center', opacity: 0.7, padding: '3rem' }}>
+              <h2>Слишком строгие фильтры</h2>
+              <p>Мы спарсили {results.length} видео, но ни одно не подходит под ваши фильтры (Просмотры, Даты, ER%). Смягчите условия.</p>
             </div>
           )}
 
@@ -888,7 +958,7 @@ export default function Home() {
             alignItems: 'start',
             paddingBottom: '2rem'
           }}>
-            {results.map((item, index) => {
+            {!loading && hasSearched && getFilteredResults().map((item, index) => {
               const isSaved = savedVideos.some(v => v.id === item.id);
 
               return (

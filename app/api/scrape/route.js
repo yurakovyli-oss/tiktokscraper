@@ -9,13 +9,13 @@ const CACHE_TTL = 1000 * 60 * 60 * 6; // 6 hours
 export async function POST(request) {
     try {
         const body = await request.json();
-        const { query, type = 'keyword', maxItems = 10, minViews = 0, dateFrom = null, dateTo = null, forceRefresh = false, keyId } = body;
+        const { query, type = 'keyword', maxItems = 10, forceRefresh = false, keyId } = body;
 
         if (!query) {
             return NextResponse.json({ error: 'Search query is required' }, { status: 400 });
         }
 
-        const cacheKey = `${type}:${JSON.stringify(query)}:${maxItems}:${minViews}:${dateFrom}:${dateTo}`;
+        const cacheKey = `${type}:${JSON.stringify(query)}:${maxItems}`;
 
         if (!forceRefresh && cache.has(cacheKey)) {
             const cachedData = cache.get(cacheKey);
@@ -104,13 +104,6 @@ export async function POST(request) {
             fetchLimit = 1000;
         }
 
-        if (dateFrom || dateTo) {
-            // Overfetch to ensure we have enough items left after date filtering, 
-            // but keep the multiplier modest to save Apify balance. (Max 50 extra)
-            fetchLimit = Math.min(fetchLimit * 2, fetchLimit + 50);
-            if (fetchLimit > 1000) fetchLimit = 1000;
-        }
-
         const apifyInput = {
             resultsPerPage: fetchLimit,
             maxItems: fetchLimit,
@@ -184,34 +177,7 @@ export async function POST(request) {
 
         let finalItems = datasetItems || [];
 
-        // Apply date limits
-        if (dateFrom || dateTo) {
-            let fromTimestamp = 0;
-            let toTimestamp = Infinity;
-
-            if (dateFrom) {
-                fromTimestamp = Math.floor(new Date(dateFrom).getTime() / 1000);
-            }
-            if (dateTo) {
-                // To include the whole entire selected day, set the boundary to 1 second before the NEXT day
-                const toDateObj = new Date(dateTo);
-                toDateObj.setDate(toDateObj.getDate() + 1);
-                toTimestamp = Math.floor(toDateObj.getTime() / 1000) - 1;
-            }
-
-            finalItems = finalItems.filter(item => {
-                const createTime = item.createTime || (item.videoMeta && item.videoMeta.createTime) || (item.video && item.video.createTime);
-                if (!createTime) return true; // Keep if we can't determine date
-
-                const timeStr = String(createTime);
-                // Handle both seconds (10 chars) and ms (13 chars)
-                const timeNum = timeStr.length === 10 ? parseInt(timeStr) : parseInt(timeStr) / 1000;
-
-                return timeNum >= fromTimestamp && timeNum <= toTimestamp;
-            });
-        }
-
-        // Slice to requested maxItems length
+        // Slice to requested maxItems length just in case
         finalItems = finalItems.slice(0, maxItems || 10);
 
         console.log(`=== APIFY FETCH (${finalItems.length}/${datasetItems.length} items after filtering) ===`);
