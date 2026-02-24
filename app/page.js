@@ -18,6 +18,7 @@ export default function Home() {
   const [savedVideos, setSavedVideos] = useState([]);
   const [sidebarTab, setSidebarTab] = useState('history'); // 'history' | 'saved'
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
 
   // Transcription state
   const [transcriptions, setTranscriptions] = useState({}); // { [videoId]: { text: string, error: string } }
@@ -84,6 +85,7 @@ export default function Home() {
       }
     };
     fetchKeys();
+    setIsMounted(true);
   }, []);
 
   // Fetch API Balances when selected key changes
@@ -128,7 +130,11 @@ export default function Home() {
 
     setHistory(prev => {
       const updated = [newItem, ...prev].slice(0, 50); // Keep last 50 searches
-      localStorage.setItem('tiktok_scraper_history', JSON.stringify(updated));
+      try {
+        localStorage.setItem('tiktok_scraper_history', JSON.stringify(updated));
+      } catch (err) {
+        console.warn('Cannot save history to localStorage (quota exceeded or disabled).', err);
+      }
       return updated;
     });
   };
@@ -162,7 +168,11 @@ export default function Home() {
       } else {
         updated = [video, ...prev]; // Add to beginning
       }
-      localStorage.setItem('tiktok_scraper_saved', JSON.stringify(updated));
+      try {
+        localStorage.setItem('tiktok_scraper_saved', JSON.stringify(updated));
+      } catch (err) {
+        console.warn('Cannot save video to localStorage (quota exceeded).', err);
+      }
       return updated;
     });
   };
@@ -244,7 +254,11 @@ export default function Home() {
         if (hIndex !== -1) {
           const updatedHistory = [...prev];
           updatedHistory[hIndex] = { ...updatedHistory[hIndex], results: updatedResults };
-          localStorage.setItem('tiktok_scraper_history', JSON.stringify(updatedHistory));
+          try {
+            localStorage.setItem('tiktok_scraper_history', JSON.stringify(updatedHistory));
+          } catch (err) {
+            console.warn('Cannot update history in localStorage.', err);
+          }
           return updatedHistory;
         }
         return prev;
@@ -346,6 +360,8 @@ export default function Home() {
       return true;
     });
   };
+
+  if (!isMounted) return null;
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', flexDirection: 'column' }}>
@@ -510,7 +526,9 @@ export default function Home() {
                         // Delete logic
                         const updatedHistory = history.filter(h => h.id !== item.id);
                         setHistory(updatedHistory);
-                        localStorage.setItem('tiktok_scraper_history', JSON.stringify(updatedHistory));
+                        try {
+                          localStorage.setItem('tiktok_scraper_history', JSON.stringify(updatedHistory));
+                        } catch (err) { }
                       }}
                       style={{
                         position: 'absolute', top: '0.5rem', right: '0.5rem', background: '#ffe4e6', color: '#e11d48',
@@ -639,7 +657,9 @@ export default function Home() {
                 key={key.id}
                 onClick={() => {
                   setSelectedKeyId(key.id);
-                  localStorage.setItem('tiktok_scraper_key_id', key.id);
+                  try {
+                    localStorage.setItem('tiktok_scraper_key_id', key.id);
+                  } catch (err) { }
                 }}
                 style={{
                   padding: '4px 8px',
