@@ -115,37 +115,55 @@ export async function POST(req) {
 
         let resultText = transcription.text.trim();
 
-        // Whisper Hallucination Filter (for silent/music-only TikToks)
-        const hallucinations = [
-            // Russian
-            "продолжение следует",
-            "субтитры",
-            "amara.org",
+        const lowerText = resultText.toLowerCase();
+
+        // Remove things inside brackets like [Музыка] or (Вздох)
+        const cleanedText = lowerText.replace(/\[.*?\]|\(.*?\)|【.*?】/g, '').trim();
+
+        // 1. Severe hallucinations that void the transcript regardless of length (due to infinite repetition bugs)
+        const severeHallucinations = [
             "dimatorzok",
-            "музыка",
-            "аплодисменты",
-            "смех",
-            "вздох",
-            "редактор",
-            // English / Common generic Whisper
+            "dima torzok",
+            "amara.org",
+            "субтитры создавал",
+            "субтитры сделал",
+            "редактор субтитров",
+            "продолжение следует",
+            "terima kasih"
+        ];
+
+        // 2. Minor/Common end-of-video hallucinations that only apply if the video is very short
+        const minorHallucinations = [
             "thank you",
             "thanks for watching",
             "subscribe",
-            // Indonesian / Malay (Very common Whisper Large V3 hallucination)
-            "terima kasih",
-            "telah menonton"
+            "telah menonton",
+            "спасибо за просмотр",
+            "подписывайтесь"
         ];
 
-        const lowerText = resultText.toLowerCase();
+        let isHallucination = false;
 
-        // If the text is very short and contains hallucinated phrases, clear it
-        if (resultText && hallucinations.some(h => lowerText.includes(h)) && resultText.length < 100) {
+        // Condition A: Contains a known severe hallucination spam word
+        if (severeHallucinations.some(h => lowerText.includes(h))) {
+            isHallucination = true;
+        }
+        // Condition B: Text consists entirely of brackets/punctuation (e.g., "[смех]")
+        else if (cleanedText.length === 0 && lowerText.length > 0) {
+            isHallucination = true;
+        }
+        // Condition C: Contains generic closing words but no other substantial content
+        else if (minorHallucinations.some(h => lowerText.includes(h)) && cleanedText.length < 50) {
+            isHallucination = true;
+        }
+
+        if (isHallucination) {
             console.log(`[Transcription] Filtered hallucination: "${resultText}"`);
-            resultText = "Голос не распознан (возможно, в видео только музыка или тишина).";
+            resultText = "— (Без голоса)";
         }
 
         if (!resultText) {
-            resultText = "Голос не распознан.";
+            resultText = "— (Без голоса)";
         }
 
         console.log(`[Transcription] Final Result:`, resultText);
