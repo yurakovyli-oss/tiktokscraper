@@ -293,7 +293,9 @@ export default function Home() {
   };
 
   // Live filter helper for frontend rendering
-  const getFilteredResults = (itemsToFilter) => {
+  const getFilteredResults = (itemsToFilter = []) => {
+    if (!itemsToFilter || !Array.isArray(itemsToFilter)) return [];
+
     return itemsToFilter.filter(item => {
       // 1. Min Views Filter
       if (minViews) {
@@ -938,13 +940,13 @@ export default function Home() {
               </div>
 
               <div style={{ fontSize: '0.95rem', color: '#64748b' }}>
-                Отображено: <span style={{ fontWeight: 'bold', color: 'var(--foreground)' }}>{getFilteredResults().length}</span> из {results.length} спарсеных
+                Отображено: <span style={{ fontWeight: 'bold', color: 'var(--foreground)' }}>{getFilteredResults(results).length}</span> из {(results || []).length} спарсеных
               </div>
             </div>
           )}
 
           {/* Results Grid */}
-          {!loading && hasSearched && getFilteredResults().length === 0 && results.length > 0 && !error && (
+          {!loading && hasSearched && getFilteredResults(results).length === 0 && (results || []).length > 0 && !error && (
             <div style={{ textAlign: 'center', opacity: 0.7, padding: '3rem' }}>
               <h2>Слишком строгие фильтры</h2>
               <p>Мы спарсили {results.length} видео, но ни одно не подходит под ваши фильтры (Просмотры, Даты, ER%). Смягчите условия.</p>
@@ -958,7 +960,7 @@ export default function Home() {
             alignItems: 'start',
             paddingBottom: '2rem'
           }}>
-            {!loading && hasSearched && getFilteredResults().map((item, index) => {
+            {!loading && hasSearched && getFilteredResults(results).map((item, index) => {
               const isSaved = savedVideos.some(v => v.id === item.id);
 
               return (
