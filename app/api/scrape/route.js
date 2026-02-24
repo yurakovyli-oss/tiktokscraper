@@ -46,7 +46,7 @@ export async function POST(request) {
             }
         }
 
-        const ACTOR_ID = process.env.APIFY_ACTOR_ID || 'apidojo/tiktok-scraper'; // Default to apidojo scraper
+        const ACTOR_ID = process.env.APIFY_ACTOR_ID || 'apidojo~tiktok-scraper'; // Default to apidojo scraper
         // Fallback to mock data if no token is provided (useful for UI development & testing)
         if (!APIFY_TOKEN || !ACTOR_ID) {
             console.log('No Apify credentials found, returning mock data.');
