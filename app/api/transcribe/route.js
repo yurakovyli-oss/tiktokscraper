@@ -99,9 +99,10 @@ export async function POST(req) {
                 const audioStream = fs.createReadStream(tempAudioPath);
                 transcription = await groq.audio.transcriptions.create({
                     file: audioStream,
-                    model: 'whisper-large-v3',
+                    model: 'whisper-large-v3-turbo', // Turbo is generally less prone to hallucinations and faster
+                    prompt: 'Это видео из TikTok. Текст может быть разговорным, сленговым. Пожалуйста, игнорируй тишину и музыку, не придумывай текст, если его нет.',
                     response_format: 'json',
-                    temperature: 0.0
+                    temperature: 0.0 // Keep deterministic
                 });
                 break; // If successful, exit the retry loop
             } catch (err) {
@@ -116,18 +117,23 @@ export async function POST(req) {
 
         // Whisper Hallucination Filter (for silent/music-only TikToks)
         const hallucinations = [
-            "продолжение следует...",
+            // Russian
             "продолжение следует",
-            "субтитры создавал",
-            "субтитры сделал",
-            "редактор субтитров",
+            "субтитры",
             "amara.org",
             "dimatorzok",
-            "dima torzok",
             "музыка",
             "аплодисменты",
             "смех",
-            "вздох"
+            "вздох",
+            "редактор",
+            // English / Common generic Whisper
+            "thank you",
+            "thanks for watching",
+            "subscribe",
+            // Indonesian / Malay (Very common Whisper Large V3 hallucination)
+            "terima kasih",
+            "telah menonton"
         ];
 
         const lowerText = resultText.toLowerCase();
