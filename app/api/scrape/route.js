@@ -114,17 +114,18 @@ export async function POST(request) {
         };
 
         if (type === 'tag') {
-            apifyInput.hashtags = query.split(',').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean);
+            // apidojo/tiktok-scraper requires hashtag search via startUrls, not a `hashtags` field
+            const tags = query.split(',').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean);
+            apifyInput.startUrls = tags.map(tag => ({ url: `https://www.tiktok.com/tag/${tag}` }));
         } else if (type === 'url') {
             // 'query' should be an array of URLs
             apifyInput.startUrls = Array.isArray(query) ? query.map(q => ({ url: q })) : [{ url: query }];
             // When scraping specific URLs, we usually don't need resultsPerPage or we set it high
             apifyInput.resultsPerPage = 100;
         } else {
-            // apidojo often uses `searchQueries`, but we also add `keywords` as some actors prefer it
+            // apidojo/tiktok-scraper uses `keywords` (array)
             const queries = query.split(',').map(q => q.trim()).filter(Boolean);
-            apifyInput.searchQueries = queries;
-            apifyInput.keywords = queries; // specific to some apidojo versions
+            apifyInput.keywords = queries;
         }
 
         // Start Apify Run
@@ -168,7 +169,27 @@ export async function POST(request) {
         }
 
         if (status !== 'SUCCEEDED') {
-            return NextResponse.json({ error: `Scraping did not succeed. Final status: ${status}` }, { status: 500 });
+            // Fetch run details to get the actual error message from Apify
+            let apifyErrorDetails = '';
+            try {
+                const runDetailsRes = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${APIFY_TOKEN}`);
+                const runDetails = await runDetailsRes.json();
+                const exitCode = runDetails.data?.exitCode;
+                console.error('Apify run details:', JSON.stringify(runDetails.data, null, 2));
+                if (exitCode !== undefined) apifyErrorDetails += ` (exitCode: ${exitCode})`;
+            } catch (e) {
+                console.error('Failed to fetch run details:', e.message);
+            }
+            // Fetch last log lines for more context
+            try {
+                const logRes = await fetch(`https://api.apify.com/v2/logs/${runId}?token=${APIFY_TOKEN}&limit=20`);
+                const logText = await logRes.text();
+                console.error('Apify run log tail:', logText);
+                apifyErrorDetails += ` | Log: ${logText.slice(-500)}`;
+            } catch (e) {
+                // ignore log fetch errors
+            }
+            return NextResponse.json({ error: `Scraping did not succeed. Final status: ${status}${apifyErrorDetails}` }, { status: 500 });
         }
 
         // Fetch the dataset results
