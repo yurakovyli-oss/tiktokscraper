@@ -46,7 +46,7 @@ export async function POST(request) {
             }
         }
 
-        const ACTOR_ID = process.env.APIFY_ACTOR_ID || 'apidojo~tiktok-scraper'; // Default to apidojo scraper
+        const ACTOR_ID = process.env.APIFY_ACTOR_ID || 'clockworks~tiktok-scraper'; // clockworks actor works reliably across accounts
         // Fallback to mock data if no token is provided (useful for UI development & testing)
         if (!APIFY_TOKEN || !ACTOR_ID) {
             console.log('No Apify credentials found, returning mock data.');
@@ -114,18 +114,17 @@ export async function POST(request) {
         };
 
         if (type === 'tag') {
-            // apidojo/tiktok-scraper requires hashtag search via startUrls, not a `hashtags` field
-            const tags = query.split(',').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean);
-            apifyInput.startUrls = tags.map(tag => ({ url: `https://www.tiktok.com/tag/${tag}` }));
+            // clockworks/tiktok-scraper: hashtag search via searchQueries with # prefix
+            const tags = query.split(',').map(tag => '#' + tag.trim().replace(/^#/, '')).filter(Boolean);
+            apifyInput.searchQueries = tags;
         } else if (type === 'url') {
             // 'query' should be an array of URLs
             apifyInput.startUrls = Array.isArray(query) ? query.map(q => ({ url: q })) : [{ url: query }];
-            // When scraping specific URLs, we usually don't need resultsPerPage or we set it high
             apifyInput.resultsPerPage = 100;
         } else {
-            // apidojo/tiktok-scraper uses `keywords` (array)
+            // clockworks/tiktok-scraper uses searchQueries for keyword search
             const queries = query.split(',').map(q => q.trim()).filter(Boolean);
-            apifyInput.keywords = queries;
+            apifyInput.searchQueries = queries;
         }
 
         // Start Apify Run
