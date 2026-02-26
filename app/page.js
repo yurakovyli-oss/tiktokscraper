@@ -304,7 +304,7 @@ export default function Home() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ videoUrl: mediaUrl }),
+        body: JSON.stringify({ videoUrl: mediaUrl, webVideoUrl: item.webVideoUrl }),
       });
 
       const data = await res.json();
@@ -391,7 +391,7 @@ export default function Home() {
         const transcribeRes = await fetch('/api/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoUrl: mediaUrl }),
+          body: JSON.stringify({ videoUrl: mediaUrl, webVideoUrl: selectedVideo.webVideoUrl }),
         });
         const transcribeData = await transcribeRes.json();
         if (!transcribeRes.ok) throw new Error(transcribeData.error || 'Ошибка транскрибации');

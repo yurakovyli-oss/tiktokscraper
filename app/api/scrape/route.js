@@ -227,9 +227,14 @@ export async function POST(request) {
                     nickname: item.author?.nickname || '',
                     avatar: item.author?.avatar || item.author?.avatarLarger || ''
                 },
-                videoMeta: item.videoMeta || item.video || {
-                    coverUrl: item.video?.cover || item.coverUrl || item.imageUrl,
-                    downloadAddr: item.video?.downloadAddr || item.videoUrl || item.playAddr
+                // Always merge from all possible sources so downloadAddr is never silently empty
+                videoMeta: {
+                    coverUrl: item.videoMeta?.coverUrl || item.video?.cover || item.coverUrl || item.imageUrl || '',
+                    downloadAddr: item.videoMeta?.downloadAddr || item.videoMeta?.playAddr ||
+                        item.video?.downloadAddr || item.video?.playAddr ||
+                        item.videoUrl || item.playAddr || '',
+                    playAddr: item.videoMeta?.playAddr || item.videoMeta?.downloadAddr ||
+                        item.video?.playAddr || item.video?.downloadAddr || '',
                 },
                 createTime: item.createTime || item.video?.createTime || item.createdAt
             };

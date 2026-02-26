@@ -43,9 +43,9 @@ export async function POST(req) {
         );
     }
 
-    const { videoUrl } = await req.json();
+    const { videoUrl, webVideoUrl } = await req.json();
 
-    if (!videoUrl) {
+    if (!videoUrl && !webVideoUrl) {
         return NextResponse.json(
             { error: 'Video URL is required' },
             { status: 400 }
@@ -57,18 +57,66 @@ export async function POST(req) {
     const tempAudioPath = path.join(tempDir, `audio_${Date.now()}.m4a`);
 
     try {
-        console.log(`[Transcription] Downloading video from: ${videoUrl}`);
+        // Resolve the actual download URL: try CDN first, fall back to TikWM if CDN fails
+        let resolvedUrl = videoUrl;
+
+        const isCdnUrl = resolvedUrl && (resolvedUrl.includes('tiktokcdn') || resolvedUrl.includes('tiktok.com/video'));
+
+        if (!resolvedUrl || !isCdnUrl) {
+            // No CDN URL — extract directly via TikWM using the page URL
+            const pageUrl = webVideoUrl || resolvedUrl;
+            console.log(`[Transcription] No CDN URL, extracting via TikWM from: ${pageUrl}`);
+            const tikwmRes = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(pageUrl)}`);
+            if (tikwmRes.ok) {
+                const tikwmData = await tikwmRes.json();
+                if (tikwmData?.data?.play) {
+                    resolvedUrl = tikwmData.data.play;
+                    console.log(`[Transcription] TikWM resolved URL successfully`);
+                }
+            }
+        }
+
+        if (!resolvedUrl) {
+            throw new Error('Не удалось получить ссылку для скачивания видео');
+        }
+
+        console.log(`[Transcription] Downloading video from: ${resolvedUrl.substring(0, 80)}...`);
 
         // 1. Download the video file with automatic retries
-        const response = await fetchWithRetry(videoUrl, {
+        let response = await fetchWithRetry(resolvedUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Referer': 'https://www.tiktok.com/',
-                'Accept': '*/*, video/mp4, audio/mp4'
+                'Accept': 'video/mp4,video/*,*/*',
+                'Range': 'bytes=0-'
             }
         });
+
+        // CDN URL returned error — try TikWM as fallback
+        if (!response.ok && webVideoUrl) {
+            console.log(`[Transcription] CDN returned ${response.status}, falling back to TikWM...`);
+            try {
+                const tikwmRes = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(webVideoUrl)}`);
+                if (tikwmRes.ok) {
+                    const tikwmData = await tikwmRes.json();
+                    if (tikwmData?.data?.play) {
+                        resolvedUrl = tikwmData.data.play;
+                        response = await fetchWithRetry(resolvedUrl, {
+                            headers: {
+                                'User-Agent': 'Mozilla/5.0',
+                                'Referer': 'https://www.tiktok.com/'
+                            }
+                        });
+                        console.log(`[Transcription] TikWM fallback response: ${response.status}`);
+                    }
+                }
+            } catch (tikwmErr) {
+                console.warn(`[Transcription] TikWM fallback failed: ${tikwmErr.message}`);
+            }
+        }
+
         if (!response.ok) {
-            throw new Error(`Failed to fetch video: ${response.status} ${response.statusText}`);
+            throw new Error(`Не удалось скачать видео: ${response.status} ${response.statusText}`);
         }
 
         const fileStream = fs.createWriteStream(tempVideoPath);
