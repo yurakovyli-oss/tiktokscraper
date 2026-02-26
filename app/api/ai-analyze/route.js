@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = 'google/gemini-2.0-flash-001';
+const MODEL = 'openai/gpt-5.2-chat';
 
 const PROMPTS = {
     summary: (videoText, transcript, metrics) => `Ты — аналитик TikTok контента. Проанализируй это видео и напиши краткую, но ёмкую суть на русском языке (3-5 предложений).
