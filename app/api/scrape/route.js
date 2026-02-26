@@ -198,17 +198,25 @@ export async function POST(request) {
 
         let finalItems = datasetItems || [];
 
+        // Filter out noResults markers and items without a real video id
+        finalItems = finalItems.filter(item => !item.noResults && (item.id || item.video?.id || item.postId));
+
+        if (finalItems.length === 0) {
+            return NextResponse.json({ error: 'Актор вернул 0 результатов. Возможно TikTok блокирует этот аккаунт Apify — попробуйте другой API ключ.' }, { status: 500 });
+        }
+
         // Slice to requested maxItems length just in case
         finalItems = finalItems.slice(0, maxItems || 10);
 
         // Normalize items so they map predictably to UI regardless of the used actor's output schema
+        // apidojo/tiktok-scraper schema: top-level playCount/diggCount/etc, authorMeta.{name,nickName,avatar}, videoMeta.{coverUrl,downloadAddr}
         finalItems = finalItems.map(item => {
-            const authorName = item.author?.uniqueId || item.authorMeta?.name || item.authorMeta?.nickName || 'user';
+            const authorName = item.authorMeta?.name || item.authorMeta?.nickName || item.author?.uniqueId || 'user';
             const vidId = item.id || item.video?.id || item.postId;
             return {
                 ...item,
                 id: vidId,
-                text: item.desc || item.text || item.title || '',
+                text: item.text || item.desc || item.title || '',
                 playCount: item.playCount || item.stats?.playCount || item.video?.playCount || item.statsV2?.playCount || 0,
                 diggCount: item.diggCount || item.stats?.diggCount || item.video?.diggCount || item.statsV2?.diggCount || 0,
                 commentCount: item.commentCount || item.stats?.commentCount || item.video?.commentCount || item.statsV2?.commentCount || 0,
