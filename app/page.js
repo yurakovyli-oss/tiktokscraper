@@ -35,6 +35,15 @@ export default function Home() {
 
   // Modal state
   const [selectedVideo, setSelectedVideo] = useState(null);
+  const [modalTab, setModalTab] = useState('transcript');
+
+  // AI Analysis state
+  const [aiResults, setAiResults] = useState({}); // { [videoId]: { summary, ideas, hook } }
+  const [aiLoadingTab, setAiLoadingTab] = useState(null);
+
+  // Full video analysis state (Анализ tab)
+  const [videoAnalysis, setVideoAnalysis] = useState({}); // { [videoId]: { summary, structure, hookPhrase, visualHook, loading, error } }
+  const [analysisStep, setAnalysisStep] = useState(''); // '' | 'transcribing' | 'analyzing'
 
   // Formatting helper for views/likes (converts 1300000 to "1,3 млн")
   const formatMetric = (num) => {
@@ -304,7 +313,7 @@ export default function Home() {
         throw new Error(data.error || 'Ошибка при транскрибации');
       }
 
-      setTranscriptions(prev => ({ ...prev, [videoId]: { text: data.text, error: null } }));
+      setTranscriptions(prev => ({ ...prev, [videoId]: { text: data.text, segments: data.segments || [], language: data.language || null, error: null } }));
     } catch (err) {
       setTranscriptions(prev => ({ ...prev, [videoId]: { text: null, error: err.message } }));
     } finally {
@@ -313,6 +322,122 @@ export default function Home() {
         next.delete(videoId);
         return next;
       });
+    }
+  };
+
+  // AI Analysis handler
+  const handleAiAnalyze = async (type) => {
+    if (!selectedVideo || aiLoadingTab) return;
+    const videoId = selectedVideo.id;
+    setAiLoadingTab(type);
+    try {
+      const er = selectedVideo.playCount > 0
+        ? (((selectedVideo.diggCount || 0) + (selectedVideo.commentCount || 0) + (selectedVideo.shareCount || 0) + (selectedVideo.collectCount || 0)) / selectedVideo.playCount * 100).toFixed(2)
+        : '0';
+
+      const res = await fetch('/api/ai-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          videoText: selectedVideo.text || '',
+          transcript: transcriptions[videoId]?.text || '',
+          metrics: {
+            plays: selectedVideo.playCount || 0,
+            likes: selectedVideo.diggCount || 0,
+            er,
+          },
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка AI');
+
+      setAiResults(prev => ({
+        ...prev,
+        [videoId]: { ...(prev[videoId] || {}), [type]: data.result },
+      }));
+    } catch (err) {
+      setAiResults(prev => ({
+        ...prev,
+        [videoId]: { ...(prev[videoId] || {}), [`${type}_error`]: err.message },
+      }));
+    } finally {
+      setAiLoadingTab(null);
+    }
+  };
+
+  // Full video analysis: transcribe + AI structure in one click
+  const handleFullAnalysis = async () => {
+    if (!selectedVideo) return;
+    const videoId = selectedVideo.id;
+    if (videoAnalysis[videoId]?.loading) return;
+
+    setVideoAnalysis(prev => ({ ...prev, [videoId]: { loading: true, error: null } }));
+
+    try {
+      // Step 1: transcribe if not already done
+      let transcriptText = transcriptions[videoId]?.text;
+      let segments = transcriptions[videoId]?.segments || [];
+
+      if (!transcriptText) {
+        setAnalysisStep('transcribing');
+        const mediaUrl = selectedVideo.videoMeta?.downloadAddr || selectedVideo.videoMeta?.playAddr
+          || selectedVideo.videoUrl || selectedVideo.video?.playAddr || selectedVideo.video?.downloadAddr
+          || selectedVideo.playAddr;
+
+        if (!mediaUrl) throw new Error('URL видео недоступен для транскрибации');
+
+        const transcribeRes = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoUrl: mediaUrl }),
+        });
+        const transcribeData = await transcribeRes.json();
+        if (!transcribeRes.ok) throw new Error(transcribeData.error || 'Ошибка транскрибации');
+
+        transcriptText = transcribeData.text;
+        segments = transcribeData.segments || [];
+        setTranscriptions(prev => ({
+          ...prev,
+          [videoId]: { text: transcriptText, segments, language: transcribeData.language || null, error: null }
+        }));
+      }
+
+      // Step 2: AI structure analysis
+      setAnalysisStep('analyzing');
+      const er = selectedVideo.playCount > 0
+        ? (((selectedVideo.diggCount || 0) + (selectedVideo.commentCount || 0) + (selectedVideo.shareCount || 0) + (selectedVideo.collectCount || 0)) / selectedVideo.playCount * 100).toFixed(2)
+        : '0';
+
+      const analyzeRes = await fetch('/api/ai-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'structure',
+          videoText: selectedVideo.text || '',
+          transcript: transcriptText,
+          segments,
+          metrics: { plays: selectedVideo.playCount || 0, likes: selectedVideo.diggCount || 0, er },
+        }),
+      });
+      const analyzeData = await analyzeRes.json();
+      if (!analyzeRes.ok) throw new Error(analyzeData.error || 'Ошибка AI анализа');
+
+      // Parse JSON from AI result (AI may wrap in markdown fences)
+      let analysis;
+      try {
+        const jsonMatch = analyzeData.result.match(/\{[\s\S]*\}/);
+        analysis = JSON.parse(jsonMatch ? jsonMatch[0] : analyzeData.result);
+      } catch {
+        analysis = { summary: analyzeData.result, structure: [], hookPhrase: null, visualHook: null };
+      }
+
+      setVideoAnalysis(prev => ({ ...prev, [videoId]: { ...analysis, loading: false, error: null } }));
+    } catch (err) {
+      setVideoAnalysis(prev => ({ ...prev, [videoId]: { loading: false, error: err.message } }));
+    } finally {
+      setAnalysisStep('');
     }
   };
 
@@ -1259,7 +1384,7 @@ export default function Home() {
                         </div>
 
                         <button
-                          onClick={() => setSelectedVideo(item)}
+                          onClick={() => { setSelectedVideo(item); setModalTab('transcript'); }}
                           style={{
                             width: '100%',
                             padding: '0.8rem',
@@ -1546,23 +1671,23 @@ export default function Home() {
             {/* Right Column */}
             <div style={{
               flex: 1,
-              padding: '2.5rem 3rem',
+              padding: '2rem 2.5rem',
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column'
             }}>
-              <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              {/* Header: Title + Region */}
+              <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '600', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Тема видео
               </div>
-              <h1 style={{ margin: '0 0 1rem 0', fontSize: '1.75rem', color: '#0f172a', lineHeight: '1.3' }}>
+              <h1 style={{ margin: '0 0 0.75rem 0', fontSize: '1.5rem', color: '#0f172a', lineHeight: '1.3' }}>
                 {selectedVideo.text ? selectedVideo.text.split('\n')[0].slice(0, 100) : 'Без названия'}
               </h1>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', color: '#475569', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: '#475569', marginBottom: '1.25rem' }}>
                 <span>Язык/Регион:</span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontWeight: '500', color: '#334155' }}>
                   {(() => {
-                    // Try different possible paths for the region or language code in Apify TikTok scrapers
                     const region = (
                       selectedVideo.textLanguage ||
                       selectedVideo.authorMeta?.region ||
@@ -1572,34 +1697,13 @@ export default function Home() {
                       selectedVideo.locationCreated ||
                       selectedVideo.locale
                     )?.toUpperCase();
-
                     const map = {
-                      'RU': '🇷🇺 Русский',
-                      'US': '🇺🇸 Английский',
-                      'GB': '🇬🇧 Английский',
-                      'EN': '🇺🇸 Английский',
-                      'UK': '🇬🇧 Английский',
-                      'UA': '🇺🇦 Украинский',
-                      'DE': '🇩🇪 Немецкий',
-                      'FR': '🇫🇷 Французский',
-                      'ES': '🇪🇸 Испанский',
-                      'IT': '🇮🇹 Итальянский',
-                      'PL': '🇵🇱 Польский',
-                      'TR': '🇹🇷 Турецкий',
-                      'KZ': '🇰🇿 Казахский',
-                      'BR': '🇧🇷 Португальский',
-                      'PT': '🇵🇹 Португальский',
-                      'KR': '🇰🇷 Корейский',
-                      'JP': '🇯🇵 Японский',
-                      'CN': '🇨🇳 Китайский',
-                      'TW': '🇹🇼 Китайский (Тайвань)',
-                      'IN': '🇮🇳 Хинди (Индия)',
-                      'ID': '🇮🇩 Индонезийский',
-                      'VN': '🇻🇳 Вьетнамский',
-                      'TH': '🇹🇭 Тайский',
-                      'AE': '🇦🇪 Арабский',
-                      'SA': '🇸🇦 Арабский',
-                      'EG': '🇪🇬 Арабский'
+                      'RU': '🇷🇺 Русский', 'US': '🇺🇸 Английский', 'GB': '🇬🇧 Английский', 'EN': '🇺🇸 Английский', 'UK': '🇬🇧 Английский',
+                      'UA': '🇺🇦 Украинский', 'DE': '🇩🇪 Немецкий', 'FR': '🇫🇷 Французский', 'ES': '🇪🇸 Испанский', 'IT': '🇮🇹 Итальянский',
+                      'PL': '🇵🇱 Польский', 'TR': '🇹🇷 Турецкий', 'KZ': '🇰🇿 Казахский', 'BR': '🇧🇷 Португальский', 'PT': '🇵🇹 Португальский',
+                      'KR': '🇰🇷 Корейский', 'JP': '🇯🇵 Японский', 'CN': '🇨🇳 Китайский', 'TW': '🇹🇼 Китайский (Тайвань)',
+                      'IN': '🇮🇳 Хинди (Индия)', 'ID': '🇮🇩 Индонезийский', 'VN': '🇻🇳 Вьетнамский', 'TH': '🇹🇭 Тайский',
+                      'AE': '🇦🇪 Арабский', 'SA': '🇸🇦 Арабский', 'EG': '🇪🇬 Арабский'
                     };
                     if (region && map[region]) return map[region];
                     if (region && region.length <= 4) return `🌐 ` + region;
@@ -1608,105 +1712,313 @@ export default function Home() {
                 </span>
               </div>
 
-              {/* Transcription Section */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2rem', marginBottom: '1rem' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>Транскрибация</h3>
-                {transcriptions[selectedVideo.id]?.text && (
-                  <button onClick={() => { navigator.clipboard.writeText(transcriptions[selectedVideo.id].text); setCopiedId('modal_' + selectedVideo.id); setTimeout(() => setCopiedId(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: copiedId === 'modal_' + selectedVideo.id ? '#10b981' : '#64748b', transition: 'all 0.2s', padding: '0.4rem', borderRadius: '8px' }}>
-                    {copiedId === 'modal_' + selectedVideo.id ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>}
-                  </button>
-                )}
-              </div>
-
-              {!transcriptions[selectedVideo.id]?.text && !transcriptions[selectedVideo.id]?.error ? (
-                <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '2rem', textAlign: 'center', border: '1px dashed #cbd5e1' }}>
-                  <p style={{ color: '#64748b', margin: '0 0 1rem 0', fontSize: '0.95rem' }}>
-                    {transcribingIds.has(selectedVideo.id) ? 'Подождите, нейросеть распознает речь...' : 'Для этого видео еще нет транскрипции.'}
-                  </p>
+              {/* ===== TAB NAVIGATION ===== */}
+              <div style={{
+                display: 'flex',
+                gap: '0.4rem',
+                padding: '0.35rem',
+                background: '#f1f5f9',
+                borderRadius: '14px',
+                marginBottom: '1.5rem'
+              }}>
+                {[
+                  { id: 'transcript', icon: '🎤', label: 'Текст' },
+                  { id: 'analysis', icon: '✨', label: 'Анализ' },
+                  { id: 'ideas', icon: '💡', label: 'Идеи' },
+                  { id: 'hook', icon: '🎣', label: 'Хук' },
+                ].map(tab => (
                   <button
-                    onClick={() => handleTranscribe(selectedVideo)}
-                    disabled={transcribingIds.has(selectedVideo.id)}
+                    key={tab.id}
+                    onClick={() => setModalTab(tab.id)}
                     style={{
-                      padding: '0.75rem 1.5rem',
-                      background: transcribingIds.has(selectedVideo.id) ? '#4f46e5' : '#312e81',
-                      color: 'white',
+                      flex: 1,
+                      padding: '0.6rem 0.5rem',
                       border: 'none',
-                      borderRadius: '12px',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
                       fontWeight: '600',
-                      cursor: transcribingIds.has(selectedVideo.id) ? 'not-allowed' : 'pointer',
-                      opacity: transcribingIds.has(selectedVideo.id) ? 0.9 : 1,
-                      display: 'inline-flex',
+                      fontSize: '0.85rem',
+                      display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      gap: '0.5rem',
-                      transition: 'all 0.2s',
+                      gap: '0.35rem',
+                      transition: 'all 0.2s ease',
+                      background: modalTab === tab.id ? '#4f46e5' : 'transparent',
+                      color: modalTab === tab.id ? 'white' : '#64748b',
+                      boxShadow: modalTab === tab.id ? '0 4px 12px rgba(79, 70, 229, 0.3)' : 'none',
                     }}
                   >
-                    {transcribingIds.has(selectedVideo.id) ? (
-                      <>
-                        <svg style={{ animation: 'spin 1s linear infinite' }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="12" y1="2" x2="12" y2="6"></line>
-                          <line x1="12" y1="18" x2="12" y2="22"></line>
-                          <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                          <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                          <line x1="2" y1="12" x2="6" y2="12"></line>
-                          <line x1="18" y1="12" x2="22" y2="12"></line>
-                          <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                          <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-                        </svg>
-                        Анализируем аудио...
-                      </>
-                    ) : (
-                      'Запустить транскрибацию'
-                    )}
+                    <span style={{ fontSize: '1rem' }}>{tab.icon}</span>
+                    {tab.label}
                   </button>
-                </div>
-              ) : transcriptions[selectedVideo.id]?.error ? (
-                <div style={{ background: '#fef2f2', color: '#ef4444', padding: '1.5rem', borderRadius: '16px', border: '1px solid #fecaca' }}>
-                  <b>Ошибка транскрибации:</b><br />
-                  {transcriptions[selectedVideo.id].error}
-                </div>
-              ) : (
-                <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '1.5rem', border: '1px solid #e2e8f0', color: '#334155', lineHeight: '1.6', fontSize: '0.95rem', maxHeight: '250px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
-                  {transcriptions[selectedVideo.id].text}
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div style={{ marginTop: '2.5rem' }}>
-                <button style={{
-                  width: '100%',
-                  maxWidth: '350px',
-                  padding: '1rem 1.5rem',
-                  background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '12px',
-                  fontWeight: '600',
-                  fontSize: '1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.75rem',
-                  boxShadow: '0 6px 16px rgba(99, 102, 241, 0.3)',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
-                }}
-                  onMouseOver={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(99, 102, 241, 0.4)'; }}
-                  onMouseOut={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(99, 102, 241, 0.3)'; }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3l1.9 5.8 1.9-5.8a2 2 0 0 1 1.3-1.3l5.8-1.9-5.8-1.9a2 2 0 0 1-1.3-1.3z"></path></svg>
-                  Генерация сценария
-                </button>
+                ))}
               </div>
 
-              {/* Summary Block Placeholder */}
-              <div style={{ marginTop: '3rem' }}>
-                <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.1rem', color: '#0f172a' }}>Суть</h3>
-                <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '1.5rem', color: '#64748b', lineHeight: '1.6', fontSize: '0.95rem' }}>
-                  Опция "Генерация сценария" или "Выжимка сути" пока является демо-интерфейсом. Вы можете подключить вызов к OpenRouter для суммаризации полученного транскрипта.
-                </div>
-              </div>
+              {/* ===== TAB CONTENT ===== */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
 
+                {/* TAB: Transcript */}
+                {modalTab === 'transcript' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>Транскрибация</h3>
+                      {transcriptions[selectedVideo.id]?.text && (
+                        <button onClick={() => { navigator.clipboard.writeText(transcriptions[selectedVideo.id].text); setCopiedId('modal_' + selectedVideo.id); setTimeout(() => setCopiedId(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: copiedId === 'modal_' + selectedVideo.id ? '#10b981' : '#64748b', transition: 'all 0.2s', padding: '0.4rem', borderRadius: '8px' }}>
+                          {copiedId === 'modal_' + selectedVideo.id ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>}
+                        </button>
+                      )}
+                    </div>
+
+                    {!transcriptions[selectedVideo.id]?.text && !transcriptions[selectedVideo.id]?.error ? (
+                      <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '2.5rem', textAlign: 'center', border: '1px dashed #cbd5e1', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎤</div>
+                        <p style={{ color: '#64748b', margin: '0 0 1.25rem 0', fontSize: '0.95rem', maxWidth: '300px' }}>
+                          {transcribingIds.has(selectedVideo.id) ? 'Нейросеть распознает речь...' : 'Транскрибируйте аудио видео в текст с помощью Groq Whisper'}
+                        </p>
+                        <button
+                          onClick={() => handleTranscribe(selectedVideo)}
+                          disabled={transcribingIds.has(selectedVideo.id)}
+                          style={{
+                            padding: '0.85rem 2rem',
+                            background: transcribingIds.has(selectedVideo.id) ? '#4f46e5' : 'linear-gradient(135deg, #312e81, #4f46e5)',
+                            color: 'white', border: 'none', borderRadius: '12px', fontWeight: '600', fontSize: '0.95rem',
+                            cursor: transcribingIds.has(selectedVideo.id) ? 'not-allowed' : 'pointer',
+                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s',
+                            boxShadow: '0 4px 14px rgba(79, 70, 229, 0.3)',
+                          }}
+                        >
+                          {transcribingIds.has(selectedVideo.id) ? (
+                            <><svg style={{ animation: 'spin 1s linear infinite' }} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg> Анализируем аудио...</>
+                          ) : (
+                            'Запустить транскрибацию'
+                          )}
+                        </button>
+                      </div>
+                    ) : transcriptions[selectedVideo.id]?.error ? (
+                      <div style={{ background: '#fef2f2', color: '#ef4444', padding: '1.5rem', borderRadius: '16px', border: '1px solid #fecaca' }}>
+                        <b>Ошибка:</b><br />{transcriptions[selectedVideo.id].error}
+                      </div>
+                    ) : (
+                      <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '1.5rem', border: '1px solid #e2e8f0', color: '#334155', lineHeight: '1.7', fontSize: '0.95rem', flex: 1, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+                        {transcriptions[selectedVideo.id].text}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB: Анализ — full one-click analysis */}
+                {modalTab === 'analysis' && (() => {
+                  const videoId = selectedVideo.id;
+                  const analysis = videoAnalysis[videoId];
+                  const isLoading = analysis?.loading;
+                  const error = analysis?.error;
+                  const hasResult = analysis && !isLoading && !error && (analysis.summary || analysis.hookPhrase);
+
+                  // Empty state
+                  if (!analysis || (!hasResult && !isLoading && !error)) {
+                    return (
+                      <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '2.5rem', textAlign: 'center', border: '1px dashed #cbd5e1', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>✨</div>
+                        <p style={{ color: '#64748b', margin: '0 0 0.5rem 0', fontSize: '1rem', fontWeight: '600' }}>Полный анализ видео</p>
+                        <p style={{ color: '#94a3b8', margin: '0 0 1.5rem 0', fontSize: '0.88rem', maxWidth: '320px', lineHeight: '1.5' }}>
+                          {transcriptions[videoId]?.text
+                            ? 'Транскрипция готова. AI проанализирует суть, структуру и хуки.'
+                            : 'Сначала транскрибирует аудио, затем AI разберёт суть, структуру и хуки.'}
+                        </p>
+                        <button
+                          onClick={handleFullAnalysis}
+                          style={{ padding: '0.9rem 2rem', background: 'linear-gradient(135deg, #312e81, #4f46e5)', color: 'white', border: 'none', borderRadius: '12px', fontWeight: '700', fontSize: '1rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.6rem', boxShadow: '0 4px 14px rgba(79,70,229,0.35)', transition: 'all 0.2s' }}
+                          onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                          onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3l1.9 5.8 1.9-5.8a2 2 0 0 1 1.3-1.3l5.8-1.9-5.8-1.9a2 2 0 0 1-1.3-1.3z"></path></svg>
+                          Анализ видео
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  // Loading state
+                  if (isLoading) {
+                    return (
+                      <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '3rem', textAlign: 'center', border: '1px solid #e2e8f0', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                        <svg style={{ animation: 'spin 1.5s linear infinite', marginBottom: '1rem' }} width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3l1.9 5.8 1.9-5.8a2 2 0 0 1 1.3-1.3l5.8-1.9-5.8-1.9a2 2 0 0 1-1.3-1.3z"></path></svg>
+                        <p style={{ color: '#4f46e5', fontWeight: '700', fontSize: '1rem', margin: 0 }}>
+                          {analysisStep === 'transcribing' ? 'Транскрибирую аудио...' : 'AI анализирует видео...'}
+                        </p>
+                        <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0.5rem 0 0 0' }}>
+                          {analysisStep === 'transcribing' ? 'Это может занять 30-60 секунд' : 'Обычно 5-15 секунд'}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Error state
+                  if (error) {
+                    return (
+                      <div style={{ background: '#fef2f2', color: '#ef4444', padding: '1.5rem', borderRadius: '16px', border: '1px solid #fecaca' }}>
+                        <b>Ошибка:</b><br />{error}
+                        <div style={{ marginTop: '1rem' }}>
+                          <button onClick={handleFullAnalysis} style={{ padding: '0.5rem 1rem', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.85rem' }}>Попробовать снова</button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Result state
+                  const sectionStyle = { marginBottom: '1.5rem' };
+                  const sectionTitleStyle = { fontSize: '0.95rem', fontWeight: '700', color: '#0f172a', margin: '0 0 0.6rem 0' };
+                  const sectionTextStyle = { color: '#475569', fontSize: '0.9rem', lineHeight: '1.6', margin: 0, background: '#f8fafc', padding: '0.85rem 1rem', borderRadius: '10px', border: '1px solid #e2e8f0' };
+
+                  return (
+                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0' }}>
+                      {/* Refresh button */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+                        <button onClick={handleFullAnalysis} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '0.3rem', borderRadius: '8px' }} title="Пересчитать">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                        </button>
+                      </div>
+
+                      {/* Суть */}
+                      {analysis.summary && (
+                        <div style={sectionStyle}>
+                          <p style={sectionTitleStyle}>Суть</p>
+                          <p style={sectionTextStyle}>{analysis.summary}</p>
+                        </div>
+                      )}
+
+                      {/* Структура */}
+                      {analysis.structure?.length > 0 && (
+                        <div style={sectionStyle}>
+                          <p style={sectionTitleStyle}>Структура</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            {analysis.structure.map((item, i) => (
+                              <div key={i} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0', flexShrink: 0, paddingTop: '2px' }}>
+                                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: i === analysis.structure.length - 1 ? '#4f46e5' : '#f97316', flexShrink: 0 }} />
+                                  {i < analysis.structure.length - 1 && <div style={{ width: '2px', flex: 1, background: '#e2e8f0', minHeight: '24px' }} />}
+                                </div>
+                                <div style={{ flex: 1, paddingBottom: '0.5rem' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                                    <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: '500', whiteSpace: 'nowrap' }}>{item.start}-{item.end} сек</span>
+                                    <span style={{ fontSize: '0.88rem', fontWeight: '700', color: '#1e293b' }}>{item.title}</span>
+                                  </div>
+                                  <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b', lineHeight: '1.5' }}>{item.description}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Хук фраза */}
+                      {analysis.hookPhrase && analysis.hookPhrase !== 'null' && (
+                        <div style={sectionStyle}>
+                          <p style={sectionTitleStyle}>Хук фраза</p>
+                          <p style={{ ...sectionTextStyle, fontStyle: 'italic', borderLeft: '3px solid #4f46e5' }}>{analysis.hookPhrase}</p>
+                        </div>
+                      )}
+
+                      {/* Визуальный хук */}
+                      {analysis.visualHook && analysis.visualHook !== 'null' && (
+                        <div style={sectionStyle}>
+                          <p style={sectionTitleStyle}>Визуальный хук</p>
+                          <p style={sectionTextStyle}>{analysis.visualHook}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* TAB: Ideas / Hook (AI tabs — shared layout) */}
+                {['ideas', 'hook'].includes(modalTab) && (() => {
+                  const tabConfig = {
+                    ideas: { icon: '💡', title: 'Идеи для видео', description: 'AI сгенерирует 5 идей для похожих видео на основе анализа этого ролика', buttonText: 'Придумать идеи' },
+                    hook: { icon: '🎣', title: 'Хуки (первые 3 сек)', description: 'AI придумает 5 вариантов цепляющего начала для похожего видео', buttonText: 'Сгенерировать хуки' },
+                  };
+                  const cfg = tabConfig[modalTab];
+                  const videoId = selectedVideo.id;
+                  const result = aiResults[videoId]?.[modalTab];
+                  const error = aiResults[videoId]?.[`${modalTab}_error`];
+                  const isLoading = aiLoadingTab === modalTab;
+
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>{cfg.icon} {cfg.title}</h3>
+                        {result && (
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            {/* Copy button */}
+                            <button onClick={() => { navigator.clipboard.writeText(result); setCopiedId('ai_' + modalTab + '_' + videoId); setTimeout(() => setCopiedId(null), 2000); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: copiedId === 'ai_' + modalTab + '_' + videoId ? '#10b981' : '#64748b', transition: 'all 0.2s', padding: '0.4rem', borderRadius: '8px' }} title="Копировать">
+                              {copiedId === 'ai_' + modalTab + '_' + videoId ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>}
+                            </button>
+                            {/* Refresh button */}
+                            <button onClick={() => handleAiAnalyze(modalTab)} disabled={isLoading} style={{ background: 'none', border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer', color: '#64748b', transition: 'all 0.2s', padding: '0.4rem', borderRadius: '8px' }} title="Обновить">
+                              <svg style={isLoading ? { animation: 'spin 1s linear infinite' } : {}} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Empty state */}
+                      {!result && !error && !isLoading && (
+                        <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '2.5rem', textAlign: 'center', border: '1px dashed #cbd5e1', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>{cfg.icon}</div>
+                          <p style={{ color: '#64748b', margin: '0 0 1.25rem 0', fontSize: '0.95rem', maxWidth: '340px', lineHeight: '1.5' }}>
+                            {cfg.description}
+                          </p>
+                          <button
+                            onClick={() => handleAiAnalyze(modalTab)}
+                            style={{
+                              padding: '0.85rem 2rem',
+                              background: 'linear-gradient(135deg, #312e81, #4f46e5)',
+                              color: 'white', border: 'none', borderRadius: '12px', fontWeight: '600', fontSize: '0.95rem',
+                              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                              transition: 'all 0.2s', boxShadow: '0 4px 14px rgba(79, 70, 229, 0.3)',
+                            }}
+                            onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3l1.9 5.8 1.9-5.8a2 2 0 0 1 1.3-1.3l5.8-1.9-5.8-1.9a2 2 0 0 1-1.3-1.3z"></path></svg>
+                            {cfg.buttonText}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Loading state */}
+                      {isLoading && (
+                        <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '3rem', textAlign: 'center', border: '1px solid #e2e8f0', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                          <svg style={{ animation: 'spin 1.5s linear infinite', marginBottom: '1rem' }} width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3l1.9 5.8 1.9-5.8a2 2 0 0 1 1.3-1.3l5.8-1.9-5.8-1.9a2 2 0 0 1-1.3-1.3z"></path>
+                          </svg>
+                          <p style={{ color: '#4f46e5', fontWeight: '600', fontSize: '1rem', margin: 0 }}>AI думает...</p>
+                          <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0.5rem 0 0 0' }}>Обычно это занимает 5-15 секунд</p>
+                        </div>
+                      )}
+
+                      {/* Error state */}
+                      {error && !isLoading && (
+                        <div style={{ background: '#fef2f2', color: '#ef4444', padding: '1.5rem', borderRadius: '16px', border: '1px solid #fecaca', marginBottom: '1rem' }}>
+                          <b>Ошибка:</b><br />{error}
+                          <div style={{ marginTop: '1rem' }}>
+                            <button onClick={() => handleAiAnalyze(modalTab)} style={{ padding: '0.5rem 1rem', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '0.85rem' }}>
+                              Попробовать снова
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Result state */}
+                      {result && !isLoading && (
+                        <div style={{ background: '#f8fafc', borderRadius: '16px', padding: '1.5rem', border: '1px solid #e2e8f0', color: '#334155', lineHeight: '1.7', fontSize: '0.95rem', flex: 1, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+                          {result}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+              </div>
             </div>
           </div>
         </div>

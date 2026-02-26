@@ -4,6 +4,31 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MODEL = 'openai/gpt-5.2-chat';
 
 const PROMPTS = {
+    structure: (videoText, transcript, segments, metrics) => {
+        const segmentsText = segments && segments.length > 0
+            ? segments.map(s => `[${s.start}с - ${s.end}с]: "${s.text}"`).join('\n')
+            : null;
+        return `Ты — аналитик TikTok контента. Проанализируй это видео и верни ТОЛЬКО валидный JSON без markdown-блоков и пояснений.
+
+Описание видео: ${videoText || 'Нет описания'}
+${segmentsText ? `Транскрипция с таймингами:\n${segmentsText}` : transcript ? `Транскрипция: ${transcript}` : 'Транскрипция недоступна'}
+Метрики: ${metrics.plays} просмотров, ${metrics.likes} лайков, ER: ${metrics.er}%
+
+Верни строго JSON (без \`\`\`, без пояснений, только объект):
+{
+  "summary": "2-4 предложения: о чём видео, почему зашло аудитории, ключевой посыл",
+  "structure": [
+    {"start": 0, "end": 3, "title": "Название блока", "description": "Что происходит в этот отрезок"},
+    {"start": 3, "end": 35, "title": "Название блока", "description": "..."},
+    {"start": 35, "end": 47, "title": "Финал и призыв", "description": "..."}
+  ],
+  "hookPhrase": "первая дословная фраза спикера из транскрипции (или null если нет голоса)",
+  "visualHook": "описание визуального начала видео — кто, где, что делает в первые секунды"
+}
+
+Правила: структуру раздели на 2-4 смысловых блока. Все тексты строго на русском языке. Тайминги бери из сегментов.`;
+    },
+
     summary: (videoText, transcript, metrics) => `Ты — аналитик TikTok контента. Проанализируй это видео и напиши краткую, но ёмкую суть на русском языке (3-5 предложений).
 
 Описание видео: ${videoText || 'Нет описания'}
@@ -50,10 +75,10 @@ export async function POST(request) {
             return NextResponse.json({ error: 'OpenRouter API ключ не настроен' }, { status: 500 });
         }
 
-        const { type, videoText, transcript, metrics } = await request.json();
+        const { type, videoText, transcript, segments, metrics } = await request.json();
 
         if (!type || !PROMPTS[type]) {
-            return NextResponse.json({ error: 'Неверный тип анализа. Допустимые: summary, ideas, hook' }, { status: 400 });
+            return NextResponse.json({ error: 'Неверный тип анализа. Допустимые: structure, summary, ideas, hook' }, { status: 400 });
         }
 
         const safeMetrics = {
@@ -62,9 +87,11 @@ export async function POST(request) {
             er: metrics?.er || '0',
         };
 
-        const prompt = PROMPTS[type](videoText, transcript, safeMetrics);
+        const prompt = type === 'structure'
+            ? PROMPTS.structure(videoText, transcript, segments || [], safeMetrics)
+            : PROMPTS[type](videoText, transcript, safeMetrics);
 
-        const temperature = type === 'summary' ? 0.3 : 0.8;
+        const temperature = type === 'structure' ? 0.3 : type === 'summary' ? 0.3 : 0.8;
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',

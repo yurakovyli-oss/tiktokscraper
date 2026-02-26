@@ -100,7 +100,7 @@ export async function POST(req) {
                 transcription = await groq.audio.transcriptions.create({
                     file: audioStream,
                     model: 'whisper-large-v3-turbo', // Turbo is generally less prone to hallucinations and faster
-                    response_format: 'json',
+                    response_format: 'verbose_json', // Returns segments with timestamps
                     temperature: 0.0 // Keep deterministic
                 });
                 break; // If successful, exit the retry loop
@@ -167,9 +167,20 @@ export async function POST(req) {
 
         console.log(`[Transcription] Final Result:`, resultText);
 
+        // Build clean segments array (only if transcription succeeded)
+        const segments = (isHallucination || !transcription.segments)
+            ? []
+            : transcription.segments.map(s => ({
+                start: Math.round(s.start),
+                end: Math.round(s.end),
+                text: s.text.trim()
+            }));
+
         return NextResponse.json({
             success: true,
-            text: resultText
+            text: resultText,
+            segments,
+            language: transcription.language || null
         });
 
     } catch (error) {
